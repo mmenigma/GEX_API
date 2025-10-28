@@ -50,7 +50,7 @@ def fetch_nq_price(access_token):
     print("\n📊 Fetching NQ futures price...")
     
     # Try different NQ symbols
-    symbols_to_try = ["/NQ", "NQ", "/NQH25", "/NQZ24"]
+    symbols_to_try = ["/NQ", "NQ", "/NQH25", "/NQZ25"]
     
     for symbol in symbols_to_try:
         url = f"https://api.schwabapi.com/marketdata/v1/quotes"
