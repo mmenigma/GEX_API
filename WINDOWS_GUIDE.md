@@ -187,7 +187,7 @@ Results are saved to `gex_levels_output.txt` - open this file in Notepad
 - [ ] Compare with GEXstream to validate
 - [ ] Enter levels into ThinkorSwim study
 
-**Time required:** ~1-2 minutes
+
 
 ---
 

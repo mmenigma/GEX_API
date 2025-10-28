@@ -1,8 +1,9 @@
 """
-Schwab API Options Chain Fetcher
+Schwab API Options Chain Fetcher - FIXED VERSION
 GEX Level Finder - Step 2: Fetch Options Data
 
-This script fetches QQQ options chain data from Schwab API.
+CRITICAL FIX: Now fetches MULTIPLE expirations (0-30 DTE) instead of just one
+This matches what GEXstream does and will give accurate GEX levels
 """
 
 import requests
@@ -84,45 +85,15 @@ def fetch_nq_price(access_token):
     return None
 
 
-def get_next_expiration():
-    """
-    Determine the next options expiration date.
-    For 0DTE: Returns today if Wed/Fri, otherwise returns next Wed/Fri
-    """
-    today = datetime.now()
-    day_of_week = today.weekday()  # Monday=0, Sunday=6
-    
-    # Wednesday = 2, Friday = 4
-    if day_of_week == 2 or day_of_week == 4:
-        # Today is Wed or Fri - use 0DTE
-        expiration = today
-        is_0dte = True
-    elif day_of_week < 2:
-        # Monday or Tuesday - next is Wednesday
-        days_until_wed = 2 - day_of_week
-        expiration = today + timedelta(days=days_until_wed)
-        is_0dte = False
-    elif day_of_week == 3:
-        # Thursday - next is Friday
-        expiration = today + timedelta(days=1)
-        is_0dte = False
-    else:
-        # Friday after market or weekend - next is Monday->Wednesday
-        days_until_wed = (7 - day_of_week + 2) % 7
-        if days_until_wed == 0:
-            days_until_wed = 7
-        expiration = today + timedelta(days=days_until_wed)
-        is_0dte = False
-    
-    return expiration.strftime('%Y-%m-%d'), is_0dte
-
-
 def fetch_options_chain(symbol="QQQ", access_token=None):
     """
     Fetch options chain from Schwab API.
+    
+    FIXED: Now fetches ALL expirations from today through next 30 days
+    This matches GEXstream methodology
     """
     print("\n" + "="*60)
-    print("FETCHING OPTIONS CHAIN DATA")
+    print("FETCHING OPTIONS CHAIN DATA - FIXED VERSION")
     print("="*60)
     
     # Use provided token or load from file
@@ -131,13 +102,15 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
         if not access_token:
             return None
     
-    # Get expiration date
-    expiration_date, is_0dte = get_next_expiration()
+    # Get date range: today through +30 days
+    today = datetime.now()
+    from_date = today.strftime('%Y-%m-%d')
+    to_date = (today + timedelta(days=30)).strftime('%Y-%m-%d')
     
     print(f"\n📊 Fetching {symbol} options...")
-    print(f"   Expiration: {expiration_date}")
-    print(f"   Type: {'0DTE (same day)' if is_0dte else 'Weekly expiration'}")
-    print(f"   Today: {datetime.now().strftime('%A, %Y-%m-%d')}")
+    print(f"   Date Range: {from_date} to {to_date}")
+    print(f"   This includes: All expirations within next 30 days")
+    print(f"   Today: {today.strftime('%A, %Y-%m-%d')}")
     
     # Schwab API endpoint
     url = f"https://api.schwabapi.com/marketdata/v1/chains"
@@ -153,8 +126,8 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
         "includeUnderlyingQuote": "true",
         "strategy": "SINGLE",
         "range": "ALL",
-        "fromDate": expiration_date,
-        "toDate": expiration_date
+        "fromDate": from_date,
+        "toDate": to_date
     }
     
     try:
@@ -166,24 +139,41 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
         if response.status_code == 200:
             data = response.json()
             
-            # Save raw data for inspection
-            with open("options_chain_raw.json", "w") as f:
-                json.dump(data, f, indent=2)
+            # Count expirations and strikes
+            num_call_exp = len(data.get('callExpDateMap', {}))
+            num_put_exp = len(data.get('putExpDateMap', {}))
+            total_call_strikes = sum(len(strikes) for strikes in data.get('callExpDateMap', {}).values())
+            total_put_strikes = sum(len(strikes) for strikes in data.get('putExpDateMap', {}).values())
             
             print("\n✅ SUCCESS! Options data received")
             print(f"💾 Raw data saved to 'options_chain_raw.json'")
             
-            # Display some basic info
-            if 'callExpDateMap' in data:
-                num_call_strikes = sum(len(strikes) for strikes in data['callExpDateMap'].values())
-                print(f"\n📈 Calls: {num_call_strikes} strikes")
+            # Display info
+            print(f"\n📈 Calls:")
+            print(f"   Expirations: {num_call_exp}")
+            print(f"   Total strikes: {total_call_strikes}")
             
-            if 'putExpDateMap' in data:
-                num_put_strikes = sum(len(strikes) for strikes in data['putExpDateMap'].values())
-                print(f"📉 Puts: {num_put_strikes} strikes")
+            print(f"\n📉 Puts:")
+            print(f"   Expirations: {num_put_exp}")
+            print(f"   Total strikes: {total_put_strikes}")
             
             if 'underlyingPrice' in data:
-                print(f"💰 {symbol} Price: ${data['underlyingPrice']:.2f}")
+                print(f"\n💰 {symbol} Price: ${data['underlyingPrice']:.2f}")
+            
+            # List expirations
+            if 'callExpDateMap' in data:
+                print(f"\n📅 Expirations fetched:")
+                for exp_date in sorted(data['callExpDateMap'].keys())[:10]:  # Show first 10
+                    date_part = exp_date.split(':')[0]
+                    dte_part = exp_date.split(':')[1]
+                    num_strikes = len(data['callExpDateMap'][exp_date])
+                    print(f"   {date_part} ({dte_part} DTE): {num_strikes} strikes")
+                if num_call_exp > 10:
+                    print(f"   ... and {num_call_exp - 10} more")
+            
+            # Save raw data
+            with open("options_chain_raw.json", "w") as f:
+                json.dump(data, f, indent=2)
             
             return data
             
@@ -210,7 +200,9 @@ def main():
     """
     Main function to fetch options chain and NQ price.
     """
-    print("\n🚀 Starting Options Chain Fetch...")
+    print("\n🚀 Starting Options Chain Fetch - FIXED VERSION...")
+    print("⚠️  CRITICAL FIX: Now fetching MULTIPLE expirations (0-30 DTE)")
+    print("   This matches GEXstream methodology and will improve accuracy")
     
     # Load access token
     access_token = load_tokens()
@@ -235,8 +227,11 @@ def main():
         print("\n" + "="*60)
         print("✅ DATA FETCH COMPLETE!")
         print("="*60)
+        print("\n🎯 IMPORTANT:")
+        print("   This fixed version fetches ALL near-term expirations")
+        print("   Your GEX calculations should now match GEXstream much better")
         print("\nNext step: Calculate GEX levels from this data")
-        print("Check 'options_chain_raw.json' to see the full data structure")
+        print("Run: python calculate_gex_v2.1.py")
         print("\n" + "="*60 + "\n")
     else:
         print("\n" + "="*60)
