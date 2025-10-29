@@ -19,7 +19,7 @@ def compare_levels():
     
     # Load your calculated results
     try:
-        with open("gex_levels_output_v2.3.txt", "r") as f:
+        with open("gex_levels_output_v2.3.txt", "r", encoding="utf-8") as f:
             content = f.read()
         print("\n✅ Loaded your v2.3 results")
         print("\n" + "-"*70)

@@ -31,7 +31,7 @@ echo ========================================
 echo.
 echo [2/3] Calculating GEX levels...
 echo.
-python calculate_gex_v2.1.py
+python calculate_gex_v2.3.py
 if errorlevel 1 (
     echo.
     echo ERROR: Failed to calculate GEX levels!
@@ -45,13 +45,13 @@ echo ========================================
 echo.
 echo [3/3] Opening results...
 echo.
-notepad gex_levels_output_v2.txt
+notepad gex_levels_output_v2.3.txt
 
 echo.
 echo ========================================
 echo    Done! Results saved to:
-echo    gex_levels_output.txt
-echo ========================================
+echo    gex_levels_output_v2.3.txt
+======
 echo.
 echo Press any key to exit...
 pause >nul

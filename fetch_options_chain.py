@@ -1,9 +1,11 @@
 """
-Schwab API Options Chain Fetcher - FIXED VERSION
+Schwab API Options Chain Fetcher - FIXED v2 (400 Error Resolution)
 GEX Level Finder - Step 2: Fetch Options Data
 
-CRITICAL FIX: Now fetches MULTIPLE expirations (0-30 DTE) instead of just one
-This matches what GEXstream does and will give accurate GEX levels
+FIXES:
+1. Removed fromDate/toDate parameters (Schwab API doesn't like them)
+2. Using range="ALL" to get all available strikes
+3. Simplified parameter set
 """
 
 import requests
@@ -51,7 +53,7 @@ def fetch_nq_price(access_token):
     print("\n📊 Fetching NQ futures price...")
     
     # Try different NQ symbols
-    symbols_to_try = ["/NQ", "NQ", "/NQH25", "/NQZ25"]
+    symbols_to_try = ["/NQZ25", "/NQ", "NQ", "/NQH25"]
     
     for symbol in symbols_to_try:
         url = f"https://api.schwabapi.com/marketdata/v1/quotes"
@@ -89,11 +91,11 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
     """
     Fetch options chain from Schwab API.
     
-    FIXED: Now fetches ALL expirations from today through next 30 days
-    This matches GEXstream methodology
+    FIXED: Removed problematic fromDate/toDate parameters
+    The API will return all available expirations by default
     """
     print("\n" + "="*60)
-    print("FETCHING OPTIONS CHAIN DATA - FIXED VERSION")
+    print("FETCHING OPTIONS CHAIN DATA - FIXED v2")
     print("="*60)
     
     # Use provided token or load from file
@@ -102,14 +104,10 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
         if not access_token:
             return None
     
-    # Get date range: today through +30 days
     today = datetime.now()
-    from_date = today.strftime('%Y-%m-%d')
-    to_date = (today + timedelta(days=30)).strftime('%Y-%m-%d')
     
     print(f"\n📊 Fetching {symbol} options...")
-    print(f"   Date Range: {from_date} to {to_date}")
-    print(f"   This includes: All expirations within next 30 days")
+    print(f"   Strategy: Get ALL available expirations")
     print(f"   Today: {today.strftime('%A, %Y-%m-%d')}")
     
     # Schwab API endpoint
@@ -120,18 +118,20 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
         "Accept": "application/json"
     }
     
+    # FIXED: Simplified parameters - removed fromDate/toDate
     params = {
         "symbol": symbol,
         "contractType": "ALL",  # Both calls and puts
         "includeUnderlyingQuote": "true",
         "strategy": "SINGLE",
-        "range": "ALL",
-        "fromDate": from_date,
-        "toDate": to_date
+        "range": "ALL"  # Get all strikes
+        # Removed: fromDate and toDate (these cause 400 errors)
     }
     
     try:
         print("\n🔄 Making API request...")
+        print(f"   Parameters: {params}")
+        
         response = requests.get(url, headers=headers, params=params)
         
         print(f"   Status Code: {response.status_code}")
@@ -160,16 +160,25 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
             if 'underlyingPrice' in data:
                 print(f"\n💰 {symbol} Price: ${data['underlyingPrice']:.2f}")
             
-            # List expirations
+            # List expirations and their DTE
             if 'callExpDateMap' in data:
                 print(f"\n📅 Expirations fetched:")
-                for exp_date in sorted(data['callExpDateMap'].keys())[:10]:  # Show first 10
+                exp_list = []
+                for exp_date in sorted(data['callExpDateMap'].keys()):
                     date_part = exp_date.split(':')[0]
                     dte_part = exp_date.split(':')[1]
                     num_strikes = len(data['callExpDateMap'][exp_date])
-                    print(f"   {date_part} ({dte_part} DTE): {num_strikes} strikes")
-                if num_call_exp > 10:
-                    print(f"   ... and {num_call_exp - 10} more")
+                    exp_list.append((date_part, int(dte_part), num_strikes))
+                
+                # Show first 15 expirations
+                for i, (date_part, dte, num_strikes) in enumerate(exp_list[:15]):
+                    dte_label = f"{dte} DTE"
+                    if dte == 0:
+                        dte_label += " ⭐ (0DTE!)"
+                    print(f"   {date_part} ({dte_label}): {num_strikes} strikes")
+                
+                if len(exp_list) > 15:
+                    print(f"   ... and {len(exp_list) - 15} more")
             
             # Save raw data
             with open("options_chain_raw.json", "w") as f:
@@ -181,6 +190,16 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
             print("\n❌ ERROR: Authentication failed (401)")
             print("Your access token may have expired.")
             print("Run 'python schwab_auth_fixed.py' to re-authenticate")
+            return None
+        
+        elif response.status_code == 400:
+            print("\n❌ ERROR: Bad Request (400)")
+            print("The API rejected our parameters.")
+            print(f"Response: {response.text}")
+            print("\nTroubleshooting:")
+            print("1. Check that symbol 'QQQ' is valid")
+            print("2. Verify your account has options data access")
+            print("3. Try re-authenticating: python schwab_auth_fixed.py")
             return None
             
         else:
@@ -200,9 +219,8 @@ def main():
     """
     Main function to fetch options chain and NQ price.
     """
-    print("\n🚀 Starting Options Chain Fetch - FIXED VERSION...")
-    print("⚠️  CRITICAL FIX: Now fetching MULTIPLE expirations (0-30 DTE)")
-    print("   This matches GEXstream methodology and will improve accuracy")
+    print("\n🚀 Starting Options Chain Fetch - FIXED v2...")
+    print("⚠️  FIX: Removed fromDate/toDate parameters that caused 400 error")
     
     # Load access token
     access_token = load_tokens()
@@ -227,17 +245,22 @@ def main():
         print("\n" + "="*60)
         print("✅ DATA FETCH COMPLETE!")
         print("="*60)
-        print("\n🎯 IMPORTANT:")
-        print("   This fixed version fetches ALL near-term expirations")
-        print("   Your GEX calculations should now match GEXstream much better")
+        print("\n🎯 Fixed the 400 error by:")
+        print("   ✅ Removing fromDate/toDate parameters")
+        print("   ✅ Using range='ALL' to get all strikes")
+        print("   ✅ Simplified parameter set")
         print("\nNext step: Calculate GEX levels from this data")
-        print("Run: python calculate_gex_v2.1.py")
+        print("Run: python calculate_gex_v2.3.py")
         print("\n" + "="*60 + "\n")
     else:
         print("\n" + "="*60)
         print("❌ DATA FETCH FAILED")
         print("="*60)
         print("\nPlease check the error messages above")
+        print("\nCommon fixes:")
+        print("1. Re-authenticate: python schwab_auth_fixed.py")
+        print("2. Verify QQQ is a valid symbol")
+        print("3. Check your Schwab account has options permissions")
         print("\n" + "="*60 + "\n")
 
 
