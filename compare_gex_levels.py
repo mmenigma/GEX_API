@@ -12,23 +12,27 @@ def compare_levels():
     print("="*70)
     print("\nThis tool helps you compare your calculated levels with GEXstream.")
     print("\nInstructions:")
-    print("1. Run calculate_gex_v2.3.py first")
+    print("1. Run calculate_gex.py first")
     print("2. Open GEXstream.com and note the 5 levels")
     print("3. Enter the GEXstream values below for comparison")
     print("\n" + "="*70)
     
     # Load your calculated results
+    output_file = "gex_levels_output.txt"
+    content = None
+    
     try:
-        with open("gex_levels_output_v2.3.txt", "r", encoding="utf-8") as f:
+        with open(output_file, "r", encoding="utf-8") as f:
             content = f.read()
-        print("\n✅ Loaded your v2.3 results")
-        print("\n" + "-"*70)
-        print(content)
-        print("-"*70)
     except FileNotFoundError:
-        print("\n⚠️  gex_levels_output_v2.3.txt not found")
-        print("Please run calculate_gex_v2.3.py first")
+        print(f"\n⚠️  Output file not found: {output_file}")
+        print("Please run calculate_gex.py first")
         return
+    
+    print(f"\n✅ Loaded your results from {output_file}")
+    print("\n" + "-"*70)
+    print(content)
+    print("-"*70)
     
     # Parse your results from the file
     your_levels = {}

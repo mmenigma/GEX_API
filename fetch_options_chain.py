@@ -6,44 +6,28 @@ FIXES:
 1. Removed fromDate/toDate parameters (Schwab API doesn't like them)
 2. Using range="ALL" to get all available strikes
 3. Simplified parameter set
+4. Added auto token refresh support
 """
 
 import requests
 import json
 from datetime import datetime, timedelta
 import time
+from token_helper import get_token
 
 
 def load_tokens():
     """
-    Load access token from tokens.txt file.
+    Load access token with automatic refresh.
     """
-    try:
-        with open("tokens.txt", "r") as f:
-            lines = f.readlines()
-            token_data = {}
-            for line in lines:
-                key, value = line.strip().split('=', 1)
-                token_data[key] = value
-        
-        # Check if token is expired
-        token_timestamp = int(token_data.get('timestamp', 0))
-        expires_in = int(token_data.get('expires_in', 0))
-        current_time = int(time.time())
-        
-        if current_time - token_timestamp > expires_in:
-            print("⚠️  WARNING: Access token may be expired")
-            print("You may need to re-authenticate using schwab_auth_fixed.py")
-        
-        return token_data.get('access_token')
-        
-    except FileNotFoundError:
-        print("❌ ERROR: tokens.txt not found")
-        print("Please run schwab_auth_fixed.py first to authenticate")
+    access_token = get_token()
+    
+    if not access_token:
+        print("❌ ERROR: Could not get valid token")
+        print("Please run: python schwab_auth_with_refresh.py")
         return None
-    except Exception as e:
-        print(f"❌ ERROR loading tokens: {e}")
-        return None
+    
+    return access_token
 
 
 def fetch_nq_price(access_token):
@@ -129,7 +113,7 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
     }
     
     try:
-        print("\n🔄 Making API request...")
+        print("\n📡 Making API request...")
         print(f"   Parameters: {params}")
         
         response = requests.get(url, headers=headers, params=params)
@@ -189,7 +173,7 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
         elif response.status_code == 401:
             print("\n❌ ERROR: Authentication failed (401)")
             print("Your access token may have expired.")
-            print("Run 'python schwab_auth_fixed.py' to re-authenticate")
+            print("Run 'python schwab_auth_with_refresh.py' to re-authenticate")
             return None
         
         elif response.status_code == 400:
@@ -199,7 +183,7 @@ def fetch_options_chain(symbol="QQQ", access_token=None):
             print("\nTroubleshooting:")
             print("1. Check that symbol 'QQQ' is valid")
             print("2. Verify your account has options data access")
-            print("3. Try re-authenticating: python schwab_auth_fixed.py")
+            print("3. Try re-authenticating: python schwab_auth_with_refresh.py")
             return None
             
         else:
@@ -250,7 +234,7 @@ def main():
         print("   ✅ Using range='ALL' to get all strikes")
         print("   ✅ Simplified parameter set")
         print("\nNext step: Calculate GEX levels from this data")
-        print("Run: python calculate_gex_v2.3.py")
+        print("Run: python calculate_gex.py")
         print("\n" + "="*60 + "\n")
     else:
         print("\n" + "="*60)
@@ -258,7 +242,7 @@ def main():
         print("="*60)
         print("\nPlease check the error messages above")
         print("\nCommon fixes:")
-        print("1. Re-authenticate: python schwab_auth_fixed.py")
+        print("1. Re-authenticate: python schwab_auth_with_refresh.py")
         print("2. Verify QQQ is a valid symbol")
         print("3. Check your Schwab account has options permissions")
         print("\n" + "="*60 + "\n")
