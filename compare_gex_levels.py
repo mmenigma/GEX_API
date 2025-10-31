@@ -60,7 +60,8 @@ def compare_levels():
         elif 'Put OI:' in line and '→' in line:
             parts = line.split('→')
             qqq_val = parts[0].split('$')[1].split()[0]
-            nq_val = parts[1].strip().replace(',', '')
+            # Split on whitespace and take first element to remove emojis
+            nq_val = parts[1].strip().split()[0].replace(',', '')
             your_levels['put_oi'] = {'qqq': float(qqq_val), 'nq': int(nq_val)}
         elif 'Net GEX:' in line:
             your_levels['net_gex'] = line.split(':')[1].strip()

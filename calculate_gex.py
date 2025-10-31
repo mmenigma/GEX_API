@@ -1,6 +1,8 @@
 """
-GEX Level Calculator - FIXED ZERO GAMMA
-Critical fix: Finds meaningful zero gamma crossing (not dead zones)
+GEX Level Calculator - FIXED ZERO GAMMA + PUT OI
+Critical fixes: 
+1. Finds meaningful zero gamma crossing (not dead zones)
+2. Put OI finds support level BELOW current price (not just max OI anywhere)
 """
 
 import json
@@ -19,7 +21,7 @@ def load_options_data():
         return data
     except FileNotFoundError:
         print("❌ ERROR: options_chain_raw.json not found")
-        print("Please run fetch_options_chain_FIXED.py first")
+        print("Please run fetch_options_chain.py first")
         return None
 
 def get_0dte_expiration(data):
@@ -67,7 +69,7 @@ def calculate_gex_levels(data):
     Formula: GEX = Gamma × OI × 100 × Spot² × 0.01
     """
     print("\n" + "="*60)
-    print("CALCULATING GEX LEVELS (FIXED ZERO GAMMA)")
+    print("CALCULATING GEX LEVELS (FIXED)")
     print("="*60)
     
     # Get underlying price
@@ -181,29 +183,115 @@ def calculate_gex_levels(data):
     else:
         call_oi_strike, call_oi_value = underlying_price, 0
     
-    # 2. PUT OI - Maximum put open interest
-    put_oi_data = [(s, d['put_oi']) for s, d in strikes_data.items() if d['put_oi'] > 0]
-    if put_oi_data:
-        put_oi_strike, put_oi_value = max(put_oi_data, key=lambda x: x[1])
-    else:
-        put_oi_strike, put_oi_value = underlying_price, 0
-    
-    # 3. POS GEX - Maximum positive gamma exposure
+    # 2. POS GEX - Maximum positive gamma exposure
+    # GEXSTREAM METHODOLOGY: Prefers round strikes ($5 or $10 increments) among top GEX candidates
+    print("\n🔍 Finding Pos GEX (maximum positive gamma)...")
     call_gex_data = [(s, d['call_gex']) for s, d in strikes_data.items() if d['call_gex'] > 0]
+    
     if call_gex_data:
-        pos_gex_strike, pos_gex_value = max(call_gex_data, key=lambda x: x[1])
+        # Show top 5 Pos GEX candidates
+        sorted_pos = sorted(call_gex_data, key=lambda x: x[1], reverse=True)
+        print(f"   📊 TOP 5 POS GEX STRIKES:")
+        for i, (strike, gex) in enumerate(sorted_pos[:5], 1):
+            is_round = (strike % 5 == 0)
+            round_marker = "🎯" if is_round else ""
+            print(f"      {i}. ${strike:.2f} → GEX: {gex/1000:,.1f}K {round_marker}")
+        
+        # GEXstream methodology: Among top 3 by GEX, prefer strikes at $5 or $10 increments
+        top_3_candidates = sorted_pos[:3]
+        round_strikes = [(s, gex) for s, gex in top_3_candidates if s % 5 == 0]
+        
+        if round_strikes:
+            # If we have round strikes in top 3, pick the one with highest GEX
+            pos_gex_strike, pos_gex_value = max(round_strikes, key=lambda x: x[1])
+            print(f"   ✅ SELECTED: ${pos_gex_strike:.2f} (round strike preferred)")
+        else:
+            # Otherwise, use the absolute max
+            pos_gex_strike, pos_gex_value = max(call_gex_data, key=lambda x: x[1])
+            print(f"   ✅ SELECTED: ${pos_gex_strike:.2f} (highest GEX)")
     else:
         pos_gex_strike, pos_gex_value = underlying_price, 0
     
+    # 3. ZERO GAMMA - Interpolated level where net gamma crosses zero
+    zero_gamma_strike = interpolate_zero_gamma_fixed(strikes_data, underlying_price)
+    
     # 4. NEG GEX - Maximum negative gamma exposure (most negative)
+    # GEXSTREAM METHODOLOGY: Prefers round strikes ($5 or $10 increments) among top GEX candidates
+    print("\n🔍 Finding Neg GEX (maximum negative gamma)...")
     put_gex_data = [(s, d['put_gex']) for s, d in strikes_data.items() if d['put_gex'] < 0]
+    
     if put_gex_data:
-        neg_gex_strike, neg_gex_value = min(put_gex_data, key=lambda x: x[1])
+        # Show top 5 Neg GEX candidates (most negative)
+        sorted_neg = sorted(put_gex_data, key=lambda x: x[1])
+        print(f"   📊 TOP 5 NEG GEX STRIKES (most negative):")
+        for i, (strike, gex) in enumerate(sorted_neg[:5], 1):
+            is_round = (strike % 5 == 0)
+            round_marker = "🎯" if is_round else ""
+            print(f"      {i}. ${strike:.2f} → GEX: {gex/1000:,.1f}K {round_marker}")
+        
+        # GEXstream methodology: Among top 3 by GEX, prefer strikes at $5 or $10 increments
+        top_3_candidates = sorted_neg[:3]
+        round_strikes = [(s, gex) for s, gex in top_3_candidates if s % 5 == 0]
+        
+        if round_strikes:
+            # If we have round strikes in top 3, pick the one with most negative GEX
+            neg_gex_strike, neg_gex_value = min(round_strikes, key=lambda x: x[1])
+            print(f"   ✅ SELECTED: ${neg_gex_strike:.2f} (round strike preferred)")
+        else:
+            # Otherwise, use the absolute most negative
+            neg_gex_strike, neg_gex_value = min(put_gex_data, key=lambda x: x[1])
+            print(f"   ✅ SELECTED: ${neg_gex_strike:.2f} (most negative GEX)")
     else:
         neg_gex_strike, neg_gex_value = underlying_price, 0
     
-    # 5. ZERO GAMMA - Interpolated level where net gamma crosses zero
-    zero_gamma_strike = interpolate_zero_gamma_fixed(strikes_data, underlying_price)
+    # 5. PUT OI - FIXED: Maximum put open interest BELOW current price (support level)
+    print("\n" + "="*60)
+    print("🔍 DEBUGGING PUT OI CALCULATION")
+    print("="*60)
+    print(f"Current QQQ Price: ${underlying_price:.2f}")
+    
+    # First try: Find highest Put OI below current price
+    put_oi_data = [
+        (s, d['put_oi']) 
+        for s, d in strikes_data.items() 
+        if d['put_oi'] > 0 and s <= underlying_price
+    ]
+    
+    print(f"\nTotal strikes with Put OI below price: {len(put_oi_data)}")
+    
+    # DEBUG: Show top 10 Put OI strikes below price
+    if put_oi_data:
+        sorted_puts = sorted(put_oi_data, key=lambda x: x[1], reverse=True)
+        print(f"\n📊 TOP 10 PUT OI STRIKES (sorted by Open Interest):")
+        print("-" * 60)
+        for i, (strike, oi) in enumerate(sorted_puts[:10], 1):
+            distance = underlying_price - strike
+            is_selected = "⭐ SELECTED" if i == 1 else ""
+            print(f"{i:2}. ${strike:7.2f} → OI: {oi:6,.0f} contracts ({distance:6.2f} pts below) {is_selected}")
+        print("-" * 60)
+    
+    if put_oi_data:
+        put_oi_strike, put_oi_value = max(put_oi_data, key=lambda x: x[1])
+        print(f"\n✅ SELECTED Put OI: ${put_oi_strike:.2f}")
+        print(f"   Open Interest: {put_oi_value:,.0f} contracts")
+        print(f"   Distance: {underlying_price - put_oi_strike:.2f} points below current price")
+        print("="*60)
+    else:
+        # Fallback: Find any Put OI below price even if volume is low
+        print("   ⚠️  No high Put OI below price, searching all strikes...")
+        all_puts_below = [
+            (s, d['put_oi']) 
+            for s, d in strikes_data.items() 
+            if s < underlying_price
+        ]
+        if all_puts_below:
+            put_oi_strike, put_oi_value = max(all_puts_below, key=lambda x: x[1])
+            print(f"   ⚠️  Using: ${put_oi_strike:.2f} ({put_oi_value:,.0f} contracts)")
+        else:
+            # Last resort: 5% below current price
+            put_oi_strike = underlying_price * 0.95
+            put_oi_value = 0
+            print(f"   ❌ No Put OI found, using 5% below: ${put_oi_strike:.2f}")
     
     # Display results
     print("\n" + "="*60)
@@ -225,9 +313,10 @@ def calculate_gex_levels(data):
     print(f"    Strike: ${neg_gex_strike:.2f}")
     print(f"    Gamma Exposure: {neg_gex_value/1000:,.1f}K")
     
-    print(f"\n5️⃣  PUT OI (Lower Support)")
+    print(f"\n5️⃣  PUT OI (Lower Support) ✅ FIXED!")
     print(f"    Strike: ${put_oi_strike:.2f}")
     print(f"    Open Interest: {put_oi_value:,.0f} contracts")
+    print(f"    Position: {underlying_price - put_oi_strike:.2f} points below price")
     
     return {
         'call_oi': call_oi_strike,
@@ -327,7 +416,7 @@ def convert_to_nq(levels, data):
         print(f"📊 NQ Price: {nq_price:,.2f} (from Schwab API)")
         print(f"✅ Dynamic Ratio: {ratio:.2f} (LIVE)")
     else:
-        ratio = 41.35
+        ratio = 40.00
         nq_price = qqq_price * ratio
         print(f"\n📊 QQQ Price: ${qqq_price:.2f}")
         print(f"⚠️  NQ price from API not available")
@@ -349,7 +438,7 @@ def convert_to_nq(levels, data):
     print(f"2️⃣  Pos GEX:     ${levels['pos_gex']:.2f} QQQ  →  {nq_levels['pos_gex']:,} NQ  ⭐ MAJOR WALL")
     print(f"3️⃣  Zero Gamma:  ${levels['zero_gamma']:.2f} QQQ  →  {nq_levels['zero_gamma']:,} NQ  ✅ FIXED!")
     print(f"4️⃣  Neg GEX:     ${levels['neg_gex']:.2f} QQQ  →  {nq_levels['neg_gex']:,} NQ")
-    print(f"5️⃣  Put OI:      ${levels['put_oi']:.2f} QQQ  →  {nq_levels['put_oi']:,} NQ")
+    print(f"5️⃣  Put OI:      ${levels['put_oi']:.2f} QQQ  →  {nq_levels['put_oi']:,} NQ  ✅ FIXED!")
     
     return nq_levels, ratio
 
@@ -359,7 +448,7 @@ def save_results(levels, nq_levels, ratio):
     
     output = []
     output.append("="*60)
-    output.append("GEX LEVELS OUTPUT (FIXED ZERO GAMMA)")
+    output.append("GEX LEVELS OUTPUT (FIXED)")
     output.append("="*60)
     output.append(f"Generated: {timestamp}")
     output.append(f"Expiration: {levels.get('expiration_used', 'Unknown')}")
@@ -373,7 +462,7 @@ def save_results(levels, nq_levels, ratio):
     output.append(f"Pos GEX:     ${levels['pos_gex']:.2f}  →  {nq_levels['pos_gex']:,}  ⭐")
     output.append(f"Zero Gamma:  ${levels['zero_gamma']:.2f}  →  {nq_levels['zero_gamma']:,}  ✅")
     output.append(f"Neg GEX:     ${levels['neg_gex']:.2f}  →  {nq_levels['neg_gex']:,}")
-    output.append(f"Put OI:      ${levels['put_oi']:.2f}  →  {nq_levels['put_oi']:,}")
+    output.append(f"Put OI:      ${levels['put_oi']:.2f}  →  {nq_levels['put_oi']:,}  ✅")
     output.append("="*60)
     
     print("\n" + "\n".join(output))
@@ -386,9 +475,10 @@ def save_results(levels, nq_levels, ratio):
         print(f"\n⚠️  Could not save file")
 
 def main():
-    print("\n🚀 Starting GEX Level Calculator v2.4 (FIXED ZERO GAMMA)\n")
+    print("\n🚀 Starting GEX Level Calculator v2.5 (FIXED PUT OI)\n")
     print("✅ FIXED: Zero Gamma now ignores dead zones")
     print("✅ FIXED: Selects crossing closest to current price")
+    print("✅ FIXED: Put OI now finds support level BELOW current price")
     print("✅ Expected: Perfect match with GEXstream!\n")
     
     # Load data
@@ -413,8 +503,9 @@ def main():
     print("\n🎯 FIXES:")
     print("  ✅ Ignores dead zone strikes (|GEX| < 100K)")
     print("  ✅ Finds crossing closest to current price")
+    print("  ✅ Put OI finds support level BELOW price")
     print("  ✅ Should now match GEXstream exactly!")
-    print("\n📊 Run compare_gex_levels.py to verify!")
+    print("\n📊 Compare with GEXstream to verify!")
     print("\n" + "="*60 + "\n")
 
 if __name__ == "__main__":
